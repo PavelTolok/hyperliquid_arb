@@ -45,7 +45,7 @@ pub async fn compare_prices(
 
     let difference = ((bybit_price - hyperliquid_price) / bybit_price).abs() * 100.0;
 
-    if difference >= 5.0 {
+    if difference >= 0.4 {
         let message = format!(
             ">5.0%: {}, bybit price: {}, hyperliquid price: {}, difference: {:.5}%",
             symbol, bybit_price, hyperliquid_price, difference
