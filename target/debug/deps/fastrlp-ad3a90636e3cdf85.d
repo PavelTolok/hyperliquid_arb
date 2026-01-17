@@ -1,0 +1,11 @@
+/Users/pavlotolok/Desktop/test/hyberliquid-arbitrage/target/debug/deps/fastrlp-ad3a90636e3cdf85.d: /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/lib.rs /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/decode.rs /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/encode.rs /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/types.rs /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/../README.md
+
+/Users/pavlotolok/Desktop/test/hyberliquid-arbitrage/target/debug/deps/libfastrlp-ad3a90636e3cdf85.rlib: /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/lib.rs /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/decode.rs /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/encode.rs /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/types.rs /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/../README.md
+
+/Users/pavlotolok/Desktop/test/hyberliquid-arbitrage/target/debug/deps/libfastrlp-ad3a90636e3cdf85.rmeta: /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/lib.rs /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/decode.rs /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/encode.rs /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/types.rs /Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/../README.md
+
+/Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/lib.rs:
+/Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/decode.rs:
+/Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/encode.rs:
+/Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/types.rs:
+/Users/pavlotolok/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrlp-0.1.3/src/../README.md:
