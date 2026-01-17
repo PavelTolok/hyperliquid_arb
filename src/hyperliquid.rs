@@ -24,11 +24,10 @@ impl HyperLiquidStruct {
     }
 
     fn format_hyperliquid_tickers(tickers: &HashMap<String, String>) -> Vec<String> {
-        let symbols: Vec<String> = tickers
+        tickers
             .keys()
-            .map(|key| Self::format_ticker_name(key))
-            .collect();
-        symbols
+            .map(Self::format_ticker_name)
+            .collect()
     }
 
     fn format_ticker_name(ticker: &String) -> String {
@@ -68,7 +67,7 @@ impl HyperLiquidStruct {
             match message {
                 Message::AllMids(all_mids) => {
                     for (ticker, price_str) in all_mids.data.mids.iter() {
-                        let formatted_ticker = Self::format_ticker_name(&ticker);
+                        let formatted_ticker = Self::format_ticker_name(ticker);
                         let price: f64 = match price_str.parse() {
                             Ok(p) => p,
                             Err(e) => {

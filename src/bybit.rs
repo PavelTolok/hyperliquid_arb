@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
@@ -51,7 +52,7 @@ impl Bybit {
 
         Ok(tickers)
     }
-    pub async fn bybit_ws(&self, common_tickers: &Vec<String>, shared_state: &Arc<SharedState>) {
+    pub async fn bybit_ws(&self, common_tickers: &[String], common_tickers_set: &HashSet<String>, shared_state: &Arc<SharedState>) {
         let (mut ws_stream, _) = match connect_async(&self.ws_url).await {
             Ok(stream) => {
                 info!("Bybit WebSocket connected successfully");
@@ -88,13 +89,37 @@ impl Bybit {
                         if let Some(topic) = &parse_msg.topic {
                             if let Some(data) = &parse_msg.data {
                                 if !data.is_empty() {
-                                    let symbol = topic.split(".").last().unwrap().to_string();
-                                    if common_tickers.contains(&symbol) {
-                                        let price: f64 = data[0].close.parse().unwrap();
+                                    // Безопасное извлечение символа из topic
+                                    let symbol = match topic.split(".").last() {
+                                        Some(s) => s.to_string(),
+                                        None => {
+                                            warn!("Invalid topic format: {}", topic);
+                                            continue;
+                                        }
+                                    };
+                                    
+                                    if common_tickers_set.contains(&symbol) {
+                                        // Безопасный парсинг цены
+                                        let price: f64 = match data[0].close.parse::<f64>() {
+                                            Ok(p) => {
+                                                // Валидация цены
+                                                if p <= 0.0 || !p.is_finite() {
+                                                    warn!("Invalid price for {}: {}", symbol, p);
+                                                    continue;
+                                                }
+                                                p
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to parse price for {}: {} (value: {})", symbol, e, data[0].close);
+                                                continue;
+                                            }
+                                        };
+                                        
                                         {
                                             let mut bybit_prices = shared_state.bybit_prices.write().await;
                                             bybit_prices.insert(symbol.clone(), price);
                                         }
+                                        
                                         if let Err(e) = compare_prices(shared_state, &symbol).await {
                                             error!("Failed comparing price in bybit for {}: {}", symbol, e);
                                         }

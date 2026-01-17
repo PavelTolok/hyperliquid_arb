@@ -1,4 +1,5 @@
 use std::env;
+use std::time::Duration;
 use log::error;
 
 #[derive(Debug)]
@@ -15,11 +16,44 @@ impl TelegramNotifier {
         let chat_id = env::var("TELEGRAM_CHAT_ID")
             .map_err(|_| "TELEGRAM_CHAT_ID not found in environment")?;
 
+        // Валидация входных данных
+        if bot_token.is_empty() {
+            return Err("TELEGRAM_BOT_TOKEN is empty".into());
+        }
+        if chat_id.is_empty() {
+            return Err("TELEGRAM_CHAT_ID is empty".into());
+        }
+        // Проверка формата chat_id (должен быть числом или начинаться с @)
+        if chat_id.parse::<i64>().is_err() && !chat_id.starts_with('@') {
+            return Err("TELEGRAM_CHAT_ID has invalid format".into());
+        }
+
+        // Создаем HTTP клиент с таймаутами для защиты от DoS
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .connect_timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
         Ok(Self {
             bot_token,
             chat_id,
-            client: reqwest::Client::new(),
+            client,
         })
+    }
+
+    /// Экранирует HTML символы для безопасной вставки в HTML
+    fn escape_html(text: &str) -> String {
+        text.chars()
+            .flat_map(|c| match c {
+                '<' => "&lt;".chars().collect::<Vec<_>>(),
+                '>' => "&gt;".chars().collect::<Vec<_>>(),
+                '&' => "&amp;".chars().collect::<Vec<_>>(),
+                '"' => "&quot;".chars().collect::<Vec<_>>(),
+                '\'' => "&#x27;".chars().collect::<Vec<_>>(),
+                _ => vec![c],
+            })
+            .collect()
     }
 
     pub async fn send_message(&self, message: &str) {
@@ -55,13 +89,22 @@ impl TelegramNotifier {
         hyperliquid_price: f64,
         difference: f64,
     ) {
+        // Валидация и экранирование символа для защиты от HTML injection
+        let safe_symbol = if symbol.len() > 50 {
+            // Ограничиваем длину символа
+            &symbol[..50]
+        } else {
+            symbol
+        };
+        let escaped_symbol = Self::escape_html(safe_symbol);
+
         let message = format!(
             "🔔 <b>Арбитражная возможность!</b>\n\n\
             Символ: <code>{}</code>\n\
             Bybit цена: <code>{:.8}</code>\n\
             Hyperliquid цена: <code>{:.8}</code>\n\
             Разница: <code>{:.5}%</code>",
-            symbol, bybit_price, hyperliquid_price, difference
+            escaped_symbol, bybit_price, hyperliquid_price, difference
         );
 
         self.send_message(&message).await;

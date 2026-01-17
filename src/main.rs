@@ -1,6 +1,7 @@
 use crate::share_state::SharedState;
 use bybit::Bybit;
 use hyperliquid::HyperLiquidStruct;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 mod bybit;
@@ -10,11 +11,12 @@ mod share_state;
 mod telegram;
 mod utils;
 
-fn get_common_tickers(bybit_tickers: Vec<String>, hyperliquid_tickers: Vec<String>) -> Vec<String> {
-    let common_tickers: Vec<String> = bybit_tickers
-        .iter()
-        .filter(|ticker| hyperliquid_tickers.contains(&ticker))
-        .cloned()
+fn get_common_tickers(bybit_tickers: Vec<String>, hyperliquid_tickers: Vec<String>) -> HashSet<String> {
+    // Используем HashSet для O(1) поиска вместо O(n)
+    let hyperliquid_set: HashSet<String> = hyperliquid_tickers.into_iter().collect();
+    let common_tickers: HashSet<String> = bybit_tickers
+        .into_iter()
+        .filter(|ticker| hyperliquid_set.contains(ticker))
         .collect();
     common_tickers
 }
@@ -64,6 +66,13 @@ async fn main() {
     };
 
     let common_tickers = get_common_tickers(bybit_tickers, hyperliquid_tickers);
+    
+    if common_tickers.is_empty() {
+        log::error!("No common tickers found between Bybit and HyperLiquid");
+        std::process::exit(1);
+    }
+    
+    log::info!("Found {} common tickers", common_tickers.len());
 
     {
         let mut bybit_prices = shared_state.bybit_prices.write().await;
@@ -74,8 +83,12 @@ async fn main() {
         }
     }
 
+    // Конвертируем HashSet в Vec для передачи в bybit_ws (для совместимости)
+    let common_tickers_vec: Vec<String> = common_tickers.iter().cloned().collect();
+    let common_tickers_set = common_tickers;
+
     tokio::join!(
         hyper_liquid.hyperliquid_ws(&shared_state),
-        bybit.bybit_ws(&common_tickers, &shared_state)
+        bybit.bybit_ws(&common_tickers_vec, &common_tickers_set, &shared_state)
     );
 }
