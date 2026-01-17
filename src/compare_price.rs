@@ -1,5 +1,5 @@
 use crate::share_state::SharedState;
-use std::{collections::HashSet, error, sync::Arc};
+use std::{collections::HashSet, error, sync::Arc, sync::LazyLock};
 use log::info;
 
 const EXCLUDED_TOKENS: &[&str] = &[
@@ -16,13 +16,17 @@ const EXCLUDED_TOKENS: &[&str] = &[
     "BNTUSDT",
 ];
 
+// Кэшируем HashSet исключенных токенов, чтобы не создавать его каждый раз
+static EXCLUDED_TOKENS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    EXCLUDED_TOKENS.iter().copied().collect()
+});
+
 pub async fn compare_prices(
     shared_state: &Arc<SharedState>,
     symbol: &str,
 ) -> Result<(), Box<dyn error::Error>> {
     // Пропускаем токены из списка исключений
-    let excluded: HashSet<&str> = EXCLUDED_TOKENS.iter().copied().collect();
-    if excluded.contains(symbol) {
+    if EXCLUDED_TOKENS_SET.contains(symbol) {
         return Ok(());
     }
     let bybit_price = {
@@ -43,7 +47,7 @@ pub async fn compare_prices(
 
     if difference >= 5.0 {
         let message = format!(
-            ">0.8%: {}, bybit price: {}, hyperliquid price: {}, difference: {:.5}%",
+            ">5.0%: {}, bybit price: {}, hyperliquid price: {}, difference: {:.5}%",
             symbol, bybit_price, hyperliquid_price, difference
         );
         

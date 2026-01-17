@@ -95,36 +95,3 @@ python main.py
 * Sends arbitrage alerts on **Twitter (X)**
 * Adjustable threshold in code (`5% default`)
 
-
-
-## Future Features
-
-* ✅ Support more exchanges (Binance, OKX, KuCoin)
-* ✅ Auto-arbitrage execution mode
-* ✅ Telegram/Discord bot notifications
-* ✅ Risk engine (fees, slippage, liquidation)
-* ✅ Portfolio PnL dashboard
-
-
-
-## Contributing
-
-Contributions are welcome!
-
-```bash
-# Fork & clone
-git checkout -b feature/my-feature
-git commit -m "Added new feature"
-git push origin feature/my-feature
-```
-
-Open a **Pull Request** 🚀
-
-
-
-## Contact
-
-For support, custom trading bots, or private development:
-
-📩 **Telegram:** [@lorine93s](https://t.me/lorine93s)
-
