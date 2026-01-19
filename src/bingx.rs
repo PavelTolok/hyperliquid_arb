@@ -26,6 +26,19 @@ pub struct BingXClient {
     base_url: String,
 }
 
+#[derive(Debug, Clone)]
+pub enum BingXTradeOutcome {
+    /// Новая позиция была открыта.
+    Opened {
+        symbol: String,
+        direction: String, // LONG / SHORT
+        quantity: f64,
+        leverage: f64,
+    },
+    /// Ничего не сделали (например, уже есть открытая позиция).
+    Skipped { reason: String },
+}
+
 #[derive(Debug, Error)]
 pub enum BingXError {
     #[error("missing env var: {0}")]
@@ -223,39 +236,39 @@ impl BingXClient {
             .join("&")
     }
 
-    /// Проверяем, есть ли уже открытая позиция по символу.
-    pub async fn has_open_position(&self, symbol: &str) -> Result<bool, BingXError> {
-        let bingx_symbol = Self::normalize_symbol(symbol);
-        let mut params = HashMap::new();
-        params.insert("symbol".to_string(), bingx_symbol.clone());
+    /// Возвращает количество открытых позиций на BingX (по всем символам).
+    ///
+    /// Твое требование: если есть ХОТЯ БЫ ОДНА открытая позиция — не открывать ничего нового.
+    pub async fn count_open_positions(&self) -> Result<usize, BingXError> {
+        let params: HashMap<String, String> = HashMap::new();
 
-        // Важно: у BingX структура data может отличаться (иногда `data` — это массив, иногда объект).
-        // Поэтому сначала получаем как Value, логируем тело при несовпадении формата и пытаемся извлечь позиции.
+        // Важно: у BingX структура data может отличаться.
+        // Поэтому сначала получаем как Value, а затем пытаемся извлечь позиции из разных форматов.
         let raw: Value = match self
             .get_signed("/openApi/swap/v2/user/positions", params)
             .await
         {
             Ok(v) => v,
             Err(e) => {
-                error!(
-                    "BingX: positions request failed for symbol {} (normalized {}): {}",
-                    symbol, bingx_symbol, e
-                );
+                error!("BingX: positions request failed: {}", e);
                 return Err(e);
             }
         };
 
         // Популярные варианты:
         // - { positions: [...] }
-        // - { data: { positions: [...] } } (иногда уже распаковано выше)
+        // - { data: { positions: [...] } }
+        // - { data: [ ... ] }
         // - [ ... ]
         let positions_val = if raw.get("positions").is_some() {
-            raw.get("positions").cloned().unwrap_or(serde_json::Value::Null)
+            raw.get("positions").cloned().unwrap_or(Value::Null)
         } else if raw.get("data").and_then(|d| d.get("positions")).is_some() {
             raw.get("data")
                 .and_then(|d| d.get("positions"))
                 .cloned()
-                .unwrap_or(serde_json::Value::Null)
+                .unwrap_or(Value::Null)
+        } else if raw.get("data").map(|d| d.is_array()).unwrap_or(false) {
+            raw.get("data").cloned().unwrap_or(Value::Null)
         } else {
             raw.clone()
         };
@@ -264,26 +277,25 @@ impl BingXClient {
             Ok(v) => v,
             Err(e) => {
                 error!(
-                    "BingX: unexpected positions response format for {} (normalized {}). raw_data={}. error={}",
-                    symbol,
-                    bingx_symbol,
-                    raw,
-                    e
+                    "BingX: unexpected positions response format. raw_data={}. error={}",
+                    raw, e
                 );
                 return Err(BingXError::Serde(e));
             }
         };
 
-        let has_position = positions.iter().any(|p| {
-            if let Some(size_str) = &p.position_amt {
-                if let Ok(size) = size_str.parse::<f64>() {
-                    return size.abs() > 0.0;
-                }
-            }
-            false
-        });
+        let open_count = positions
+            .iter()
+            .filter(|p| {
+                p.position_amt
+                    .as_ref()
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .map(|v| v.abs() > 0.0)
+                    .unwrap_or(false)
+            })
+            .count();
 
-        Ok(has_position)
+        Ok(open_count)
     }
 
     /// Получаем доступный баланс USDT на фьючерсном аккаунте.
@@ -366,7 +378,7 @@ impl BingXClient {
         open_on_fraction_of_deposit: f64,
         leverage: f64,
         reference_price: f64,
-    ) -> Result<(), BingXError> {
+    ) -> Result<BingXTradeOutcome, BingXError> {
         let bingx_symbol = Self::normalize_symbol(symbol);
         if reference_price <= 0.0 {
             return Err(BingXError::Internal(
@@ -439,7 +451,12 @@ impl BingXClient {
             direction, bingx_symbol, quantity, leverage
         );
 
-        Ok(())
+        Ok(BingXTradeOutcome::Opened {
+            symbol: bingx_symbol,
+            direction: direction.to_string(),
+            quantity,
+            leverage,
+        })
     }
 
     /// Основной обработчик арбитражной возможности.
@@ -453,25 +470,28 @@ impl BingXClient {
         symbol: &str,
         bybit_price: f64,
         hyperliquid_price: f64,
-    ) -> Result<(), BingXError> {
-        // 1. Проверка открытых позиций
-        match self.has_open_position(symbol).await {
-            Ok(true) => {
+    ) -> Result<BingXTradeOutcome, BingXError> {
+        // 1. КРИТИЧНО: проверка общего числа открытых позиций.
+        // Если есть хотя бы одна открытая позиция — НИЧЕГО не открываем.
+        match self.count_open_positions().await {
+            Ok(open_count) if open_count > 0 => {
                 info!(
-                    "BingX: position for symbol {} already exists. Skipping new order.",
-                    symbol
+                    "BingX: {} open position(s) exist. Skipping new order for {}.",
+                    open_count, symbol
                 );
-                return Ok(());
+                return Ok(BingXTradeOutcome::Skipped {
+                    reason: format!("{} open position(s) exist", open_count),
+                });
             }
-            Ok(false) => {
+            Ok(_) => {
                 info!(
-                    "BingX: no open positions for {} – allowed to open new one.",
+                    "BingX: no open positions at all – allowed to open new one for {}.",
                     symbol
                 );
             }
             Err(e) => {
                 error!(
-                    "BingX: failed to check existing positions for {}: {}. Aborting trade.",
+                    "BingX: failed to check existing positions (global) for {}: {}. Aborting trade.",
                     symbol, e
                 );
                 return Err(e);
@@ -488,7 +508,9 @@ impl BingXClient {
                 "BingX: bybit_price == hyperliquid_price for {} – no trade direction.",
                 symbol
             );
-            return Ok(());
+            return Ok(BingXTradeOutcome::Skipped {
+                reason: "prices equal".to_string(),
+            });
         };
 
         info!(
@@ -499,18 +521,21 @@ impl BingXClient {
         // 3. Открываем позицию – 75% от депозита, 10x, маркет.
         // В качестве референсной цены берем цену Bybit (как более ликвидную/центральную).
         let reference_price = bybit_price;
-        if let Err(e) = self
+        let outcome = match self
             .open_market_position(symbol, direction, 0.75, 10.0, reference_price)
             .await
         {
-            error!(
-                "BingX: failed to open {} position for {}: {}",
-                direction, symbol, e
-            );
-            return Err(e);
-        }
+            Ok(o) => o,
+            Err(e) => {
+                error!(
+                    "BingX: failed to open {} position for {}: {}",
+                    direction, symbol, e
+                );
+                return Err(e);
+            }
+        };
 
-        Ok(())
+        Ok(outcome)
     }
 }
 
