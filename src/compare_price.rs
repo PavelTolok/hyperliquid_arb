@@ -1,6 +1,7 @@
 use crate::share_state::SharedState;
 use std::{collections::HashSet, error, sync::Arc, sync::LazyLock};
-use log::info;
+use log::{info, error};
+use crate::bingx::BingXTradeOutcome;
 
 const EXCLUDED_TOKENS: &[&str] = &[
     "PIXELUSDT",
@@ -59,6 +60,56 @@ pub async fn compare_prices(
             telegram
                 .send_arbitrage_opportunity(symbol, bybit_price, hyperliquid_price, difference)
                 .await;
+        }
+
+        // Если инициализирован клиент BingX – пробуем автоматически открыть позицию по заданным правилам.
+        if let Some(bingx) = &shared_state.bingx {
+            match bingx
+                .handle_arbitrage_opportunity(symbol, bybit_price, hyperliquid_price)
+                .await
+            {
+                Ok(BingXTradeOutcome::Opened {
+                    symbol: opened_symbol,
+                    direction,
+                    quantity,
+                    leverage,
+                }) => {
+                    info!(
+                        "BingX position opened: symbol={}, direction={}, qty={}, leverage={}",
+                        opened_symbol, direction, quantity, leverage
+                    );
+
+                    if let Some(telegram) = &shared_state.telegram {
+                        let msg = format!(
+                            "✅ <b>BingX position opened</b>\n\n\
+                            Symbol: <code>{}</code>\n\
+                            Side: <code>{}</code>\n\
+                            Qty: <code>{:.8}</code>\n\
+                            Leverage: <code>{:.0}x</code>\n\
+                            Bybit: <code>{:.8}</code>\n\
+                            Hyperliquid: <code>{:.8}</code>\n\
+                            Diff: <code>{:.5}%</code>",
+                            opened_symbol,
+                            direction,
+                            quantity,
+                            leverage,
+                            bybit_price,
+                            hyperliquid_price,
+                            difference
+                        );
+                        telegram.send_message(&msg).await;
+                    }
+                }
+                Ok(BingXTradeOutcome::Skipped { reason }) => {
+                    info!("BingX trade skipped for {}: {}", symbol, reason);
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to handle arbitrage opportunity on BingX for {}: {}",
+                        symbol, e
+                    );
+                }
+            }
         }
     }
 
