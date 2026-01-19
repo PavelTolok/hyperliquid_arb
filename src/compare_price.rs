@@ -1,6 +1,6 @@
 use crate::share_state::SharedState;
 use std::{collections::HashSet, error, sync::Arc, sync::LazyLock};
-use log::info;
+use log::{info, error};
 
 const EXCLUDED_TOKENS: &[&str] = &[
     "PIXELUSDT",
@@ -45,7 +45,7 @@ pub async fn compare_prices(
 
     let difference = ((bybit_price - hyperliquid_price) / bybit_price).abs() * 100.0;
 
-    if difference >= 5.0 {
+    if difference >= 1.0 {
         let message = format!(
             ">5.0%: {}, bybit price: {}, hyperliquid price: {}, difference: {:.5}%",
             symbol, bybit_price, hyperliquid_price, difference
@@ -59,6 +59,19 @@ pub async fn compare_prices(
             telegram
                 .send_arbitrage_opportunity(symbol, bybit_price, hyperliquid_price, difference)
                 .await;
+        }
+
+        // Если инициализирован клиент BingX – пробуем автоматически открыть позицию по заданным правилам.
+        if let Some(bingx) = &shared_state.bingx {
+            if let Err(e) = bingx
+                .handle_arbitrage_opportunity(symbol, bybit_price, hyperliquid_price)
+                .await
+            {
+                error!(
+                    "Failed to handle arbitrage opportunity on BingX for {}: {}",
+                    symbol, e
+                );
+            }
         }
     }
 

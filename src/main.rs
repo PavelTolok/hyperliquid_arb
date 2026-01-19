@@ -10,6 +10,9 @@ mod hyperliquid;
 mod share_state;
 mod telegram;
 mod utils;
+mod bingx;
+
+use bingx::BingXClient;
 
 fn get_common_tickers(bybit_tickers: Vec<String>, hyperliquid_tickers: Vec<String>) -> HashSet<String> {
     // Используем HashSet для O(1) поиска вместо O(n)
@@ -46,12 +49,25 @@ async fn main() {
     };
 
     let hyper_liquid = HyperLiquidStruct::new().await;
+
+    // Инициализируем BingX клиента (если есть ключи в окружении)
+    let bingx_client = match BingXClient::from_env() {
+        Ok(client) => {
+            log::info!("BingX client initialized successfully");
+            Some(Arc::new(client))
+        }
+        Err(e) => {
+            log::warn!("BingX client not initialized: {}. BingX trading is disabled.", e);
+            None
+        }
+    };
+
     let bybit = Bybit::new();
     let shared_state = Arc::new(
         if let Some(telegram) = telegram_notifier {
-            SharedState::with_telegram(telegram)
+            SharedState::with_telegram(telegram, bingx_client.clone())
         } else {
-            SharedState::new()
+            SharedState::new(bingx_client.clone())
         }
     );
 
