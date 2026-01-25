@@ -470,6 +470,7 @@ impl BingXClient {
         symbol: &str,
         bybit_price: f64,
         hyperliquid_price: f64,
+        aster_price: f64,
     ) -> Result<BingXTradeOutcome, BingXError> {
         // 1. КРИТИЧНО: проверка общего числа открытых позиций.
         // Если есть хотя бы одна открытая позиция — НИЧЕГО не открываем.
@@ -499,13 +500,15 @@ impl BingXClient {
         }
 
         // 2. Определяем направление по разнице цен
-        let direction = if hyperliquid_price > bybit_price {
+        // SHORT если Price_Hyperliquid > Price_Bybit ИЛИ Price_ASTER > Price_Bybit
+        // LONG если Price_Bybit > Price_Hyperliquid ИЛИ Price_Bybit > Price_ASTER
+        let direction = if hyperliquid_price > bybit_price || aster_price > bybit_price {
             "SHORT"
-        } else if bybit_price > hyperliquid_price {
+        } else if bybit_price > hyperliquid_price || bybit_price > aster_price {
             "LONG"
         } else {
             warn!(
-                "BingX: bybit_price == hyperliquid_price for {} – no trade direction.",
+                "BingX: bybit_price == hyperliquid_price == aster_price for {} – no trade direction.",
                 symbol
             );
             return Ok(BingXTradeOutcome::Skipped {
