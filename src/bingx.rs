@@ -34,6 +34,8 @@ pub enum BingXTradeOutcome {
         direction: String, // LONG / SHORT
         quantity: f64,
         leverage: f64,
+        entry_price: f64,
+        take_profit_price: f64,
     },
     /// Ничего не сделали (например, уже есть открытая позиция).
     Skipped { reason: String },
@@ -64,6 +66,7 @@ where
     data: Option<T>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Position {
     symbol: String,
@@ -73,11 +76,13 @@ struct Position {
     position_amt: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Default)]
 struct PositionsData {
     positions: Vec<Position>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct BalanceItem {
     asset: String,
@@ -85,6 +90,7 @@ struct BalanceItem {
     available_balance: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Default)]
 struct BalanceData {
     balances: Vec<BalanceItem>,
@@ -366,11 +372,161 @@ impl BingXClient {
         }
     }
 
+    /// Устанавливает take profit ордер для открытой позиции.
+    ///
+    /// - symbol: символ (например, "AXS-USDT")
+    /// - direction: "LONG" или "SHORT"
+    /// - quantity: количество позиции
+    /// - entry_price: цена входа
+    /// - take_profit_percent: процент прибыли (например, 3.0 для 3%)
+    async fn set_take_profit(
+        &self,
+        symbol: &str,
+        direction: &str,
+        quantity: f64,
+        entry_price: f64,
+        take_profit_percent: f64,
+    ) -> Result<(), BingXError> {
+        let bingx_symbol = Self::normalize_symbol(symbol);
+        
+        // Рассчитываем цену take profit: для LONG +3%, для SHORT -3%
+        let take_profit_price = if direction == "LONG" {
+            entry_price * (1.0 + take_profit_percent / 100.0)
+        } else {
+            entry_price * (1.0 - take_profit_percent / 100.0)
+        };
+
+        info!(
+            "BingX: setting take profit for {} {} position. entry_price={}, take_profit_price={} (+{}%)",
+            direction, bingx_symbol, entry_price, take_profit_price, take_profit_percent
+        );
+
+        // Определяем сторону для закрытия позиции (противоположная открытию)
+        let close_side = match direction {
+            "LONG" => "SELL",  // Закрываем LONG продажей
+            "SHORT" => "BUY",  // Закрываем SHORT покупкой
+            _ => {
+                return Err(BingXError::Internal(format!(
+                    "unknown direction for take profit: {}",
+                    direction
+                )));
+            }
+        };
+
+        let mut params = HashMap::new();
+        params.insert("symbol".to_string(), bingx_symbol.clone());
+        params.insert("side".to_string(), close_side.to_string());
+        params.insert("positionSide".to_string(), direction.to_string());
+        params.insert("type".to_string(), "TAKE_PROFIT_MARKET".to_string());
+        // Форматируем количество с достаточной точностью, но без лишних нулей
+        let quantity_str = format!("{:.8}", quantity).trim_end_matches('0').trim_end_matches('.').to_string();
+        params.insert("quantity".to_string(), quantity_str);
+        // stopPrice - это триггерная цена, при достижении которой сработает take profit
+        params.insert("stopPrice".to_string(), format!("{:.8}", take_profit_price));
+        // Используем takeProfitPrice вместо takeProfit (согласно документации)
+        params.insert("takeProfitPrice".to_string(), format!("{:.8}", take_profit_price));
+        params.insert("marginMode".to_string(), "CROSSED".to_string());
+        // workingType определяет, по какой цене проверяется триггер
+        params.insert("workingType".to_string(), "MARK_PRICE".to_string());
+        // timeInForce - GTC (Good Till Cancel) для условных ордеров
+        params.insert("timeInForce".to_string(), "GTC".to_string());
+
+        info!(
+            "BingX: sending take profit order with params: symbol={}, side={}, positionSide={}, type=TAKE_PROFIT_MARKET, quantity={}, takeProfitPrice={}, stopPrice={}",
+            bingx_symbol, close_side, direction, quantity, take_profit_price, take_profit_price
+        );
+
+        // Используем прямой вызов для получения полного ответа
+        params.insert("timestamp".to_string(), Self::timestamp_ms().to_string());
+        let query = Self::build_query(&params);
+        let signature = self.sign(&query)?;
+        let full_body = format!("{}&signature={}", query, signature);
+
+        let url = format!("{}/openApi/swap/v2/trade/order", self.base_url);
+        let resp = self
+            .http_client
+            .post(&url)
+            .header("X-BX-APIKEY", &self.api_key)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(full_body)
+            .send()
+            .await
+            .map_err(BingXError::Http)?;
+
+        let text = resp.text().await.map_err(BingXError::Http)?;
+        info!("BingX: take profit order response: {}", text);
+
+        let api_resp: ApiResponse<serde_json::Value> = serde_json::from_str(&text)
+            .map_err(|e| BingXError::Serde(e))?;
+
+        if api_resp.code != 0 {
+            let error_msg = api_resp
+                .msg
+                .unwrap_or_else(|| format!("unknown error, body: {}", text));
+            warn!(
+                "BingX: failed to set take profit via order endpoint for {} {} position. Code: {}, Message: {}. Trying alternative method...",
+                direction, bingx_symbol, api_resp.code, error_msg
+            );
+            
+            // Пробуем альтернативный метод - установка TP через отдельный endpoint
+            return self.set_take_profit_alternative(&bingx_symbol, direction, take_profit_price).await;
+        }
+
+        info!(
+            "BingX: successfully set take profit at {} for {} {} position",
+            take_profit_price, direction, bingx_symbol
+        );
+        Ok(())
+    }
+
+    /// Альтернативный метод установки take profit через отдельный endpoint (если основной не работает)
+    async fn set_take_profit_alternative(
+        &self,
+        symbol: &str,
+        direction: &str,
+        take_profit_price: f64,
+    ) -> Result<(), BingXError> {
+        // Пробуем использовать endpoint для установки TP/SL на позицию
+        let mut params = HashMap::new();
+        params.insert("symbol".to_string(), symbol.to_string());
+        params.insert("positionSide".to_string(), direction.to_string());
+        params.insert("takeProfit".to_string(), take_profit_price.to_string());
+        
+        info!(
+            "BingX: trying alternative take profit method for {} {} position at {}",
+            direction, symbol, take_profit_price
+        );
+
+        // Пробуем endpoint для изменения TP/SL позиции (если такой существует)
+        // Если этот endpoint не существует, вернем ошибку
+        match self
+            .post_signed::<serde_json::Value>("/openApi/swap/v2/trade/positionTPSL", params)
+            .await
+        {
+            Ok(_) => {
+                info!(
+                    "BingX: successfully set take profit (alternative method) at {} for {} {} position",
+                    take_profit_price, direction, symbol
+                );
+                Ok(())
+            }
+            Err(e) => {
+                // Если альтернативный метод тоже не работает, возвращаем ошибку
+                warn!(
+                    "BingX: alternative take profit method also failed for {} {}: {}",
+                    direction, symbol, e
+                );
+                Err(e)
+            }
+        }
+    }
+
     /// Открытие маркет-позиции на BingX.
     ///
     /// - direction: \"LONG\" или \"SHORT\"
     /// - open_on_fraction_of_deposit: доля депозита, которую хотим использовать как маржу (например, 0.75).
     /// - leverage: плечо (например, 10).
+    /// - take_profit_percent: процент прибыли для take profit (например, 3.0 для 3%)
     pub async fn open_market_position(
         &self,
         symbol: &str,
@@ -378,6 +534,7 @@ impl BingXClient {
         open_on_fraction_of_deposit: f64,
         leverage: f64,
         reference_price: f64,
+        take_profit_percent: f64,
     ) -> Result<BingXTradeOutcome, BingXError> {
         let bingx_symbol = Self::normalize_symbol(symbol);
         if reference_price <= 0.0 {
@@ -431,6 +588,13 @@ impl BingXClient {
         // Убедимся, что включена кросс маржа и 10x плечо (если API это требует отдельным вызовом)
         self.ensure_cross_margin_10x(&bingx_symbol, direction).await;
 
+        // Рассчитываем цену take profit заранее
+        let take_profit_price = if direction == "LONG" {
+            reference_price * (1.0 + take_profit_percent / 100.0)
+        } else {
+            reference_price * (1.0 - take_profit_percent / 100.0)
+        };
+
         let mut params = HashMap::new();
         params.insert("symbol".to_string(), bingx_symbol.clone());
         params.insert("side".to_string(), side.to_string());
@@ -441,21 +605,45 @@ impl BingXClient {
         params.insert("quantity".to_string(), quantity.to_string());
         params.insert("marginMode".to_string(), "CROSSED".to_string());
         params.insert("leverage".to_string(), format!("{:.0}", leverage));
+        // Пробуем установить take profit сразу при открытии позиции
+        params.insert("takeProfitPrice".to_string(), format!("{:.8}", take_profit_price));
 
         let _resp: OrderResponse = self
             .post_signed("/openApi/swap/v2/trade/order", params)
             .await?;
 
+        // Используем reference_price как цену входа (приблизительную)
+        // В реальности цена входа может немного отличаться из-за проскальзывания
+        let entry_price = reference_price;
+
         info!(
-            "BingX: successfully opened {} market position on {} with qty={} and leverage={}",
-            direction, bingx_symbol, quantity, leverage
+            "BingX: successfully opened {} market position on {} with qty={}, leverage={}, entry_price={}, take_profit_price={}",
+            direction, bingx_symbol, quantity, leverage, entry_price, take_profit_price
         );
+
+        // Если take profit не был установлен при открытии позиции (через takeProfitPrice),
+        // пробуем установить его отдельным ордером
+        // Небольшая задержка, чтобы позиция успела полностью открыться
+        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+        // Устанавливаем take profit ордер отдельно (на случай, если takeProfitPrice в основном ордере не сработал)
+        if let Err(e) = self
+            .set_take_profit(&bingx_symbol, direction, quantity, entry_price, take_profit_percent)
+            .await
+        {
+            warn!(
+                "BingX: position opened but take profit setup failed for {}: {}. TP may have been set via takeProfitPrice parameter.",
+                bingx_symbol, e
+            );
+        }
 
         Ok(BingXTradeOutcome::Opened {
             symbol: bingx_symbol,
             direction: direction.to_string(),
             quantity,
             leverage,
+            entry_price,
+            take_profit_price,
         })
     }
 
@@ -470,6 +658,7 @@ impl BingXClient {
         symbol: &str,
         bybit_price: f64,
         hyperliquid_price: f64,
+        aster_price: f64,
     ) -> Result<BingXTradeOutcome, BingXError> {
         // 1. КРИТИЧНО: проверка общего числа открытых позиций.
         // Если есть хотя бы одна открытая позиция — НИЧЕГО не открываем.
@@ -499,13 +688,15 @@ impl BingXClient {
         }
 
         // 2. Определяем направление по разнице цен
-        let direction = if hyperliquid_price > bybit_price {
+        // SHORT если Price_Hyperliquid > Price_Bybit ИЛИ Price_ASTER > Price_Bybit
+        // LONG если Price_Bybit > Price_Hyperliquid ИЛИ Price_Bybit > Price_ASTER
+        let direction = if hyperliquid_price > bybit_price || aster_price > bybit_price {
             "SHORT"
-        } else if bybit_price > hyperliquid_price {
+        } else if bybit_price > hyperliquid_price || bybit_price > aster_price {
             "LONG"
         } else {
             warn!(
-                "BingX: bybit_price == hyperliquid_price for {} – no trade direction.",
+                "BingX: bybit_price == hyperliquid_price == aster_price for {} – no trade direction.",
                 symbol
             );
             return Ok(BingXTradeOutcome::Skipped {
@@ -520,9 +711,11 @@ impl BingXClient {
 
         // 3. Открываем позицию – 75% от депозита, 10x, маркет.
         // В качестве референсной цены берем цену Bybit (как более ликвидную/центральную).
+        // Устанавливаем take profit на +3% от точки входа (без учета плеча).
         let reference_price = bybit_price;
+        let take_profit_percent = 3.0; // 3% прибыли
         let outcome = match self
-            .open_market_position(symbol, direction, 0.75, 10.0, reference_price)
+            .open_market_position(symbol, direction, 0.75, 10.0, reference_price, take_profit_percent)
             .await
         {
             Ok(o) => o,

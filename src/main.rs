@@ -1,6 +1,7 @@
 use crate::share_state::SharedState;
 use bybit::Bybit;
 use hyperliquid::HyperLiquidStruct;
+use aster::AsterStruct;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -11,15 +12,17 @@ mod share_state;
 mod telegram;
 mod utils;
 mod bingx;
+mod aster;
 
 use bingx::BingXClient;
 
-fn get_common_tickers(bybit_tickers: Vec<String>, hyperliquid_tickers: Vec<String>) -> HashSet<String> {
+fn get_common_tickers(bybit_tickers: Vec<String>, hyperliquid_tickers: Vec<String>, aster_tickers: Vec<String>) -> HashSet<String> {
     // Используем HashSet для O(1) поиска вместо O(n)
     let hyperliquid_set: HashSet<String> = hyperliquid_tickers.into_iter().collect();
+    let aster_set: HashSet<String> = aster_tickers.into_iter().collect();
     let common_tickers: HashSet<String> = bybit_tickers
         .into_iter()
-        .filter(|ticker| hyperliquid_set.contains(ticker))
+        .filter(|ticker| hyperliquid_set.contains(ticker) && aster_set.contains(ticker))
         .collect();
     common_tickers
 }
@@ -34,7 +37,7 @@ async fn main() {
         .filter_level(log::LevelFilter::Info)
         .init();
 
-    log::info!("Starting hyperliquid arbitrage bot...");
+    log::info!("Starting arbitrage bot (Bybit + Hyperliquid + ASTER)...");
 
     // Инициализируем Telegram notifier (если доступен)
     let telegram_notifier = match crate::telegram::TelegramNotifier::new() {
@@ -49,6 +52,18 @@ async fn main() {
     };
 
     let hyper_liquid = HyperLiquidStruct::new().await;
+
+    // Инициализируем ASTER клиента
+    let aster_client = match AsterStruct::new() {
+        Ok(client) => {
+            log::info!("ASTER client initialized successfully");
+            client
+        }
+        Err(e) => {
+            log::error!("Failed to initialize ASTER client: {}. Exiting.", e);
+            std::process::exit(1);
+        }
+    };
 
     // Инициализируем BingX клиента (если есть ключи в окружении)
     let bingx_client = match BingXClient::from_env() {
@@ -81,10 +96,12 @@ async fn main() {
         }
     };
 
-    let common_tickers = get_common_tickers(bybit_tickers, hyperliquid_tickers);
+    let aster_tickers = aster_client.get_tickers().await;
+
+    let common_tickers = get_common_tickers(bybit_tickers, hyperliquid_tickers, aster_tickers);
     
     if common_tickers.is_empty() {
-        log::error!("No common tickers found between Bybit and HyperLiquid");
+        log::error!("No common tickers found between Bybit, Hyperliquid and ASTER");
         std::process::exit(1);
     }
     
@@ -93,9 +110,11 @@ async fn main() {
     {
         let mut bybit_prices = shared_state.bybit_prices.write().await;
         let mut hyperliquid_price = shared_state.hyperliquid_prices.write().await;
+        let mut aster_prices = shared_state.aster_prices.write().await;
         for ticker in &common_tickers {
             bybit_prices.insert(ticker.clone(), 0.0);
             hyperliquid_price.insert(ticker.clone(), 0.0);
+            aster_prices.insert(ticker.clone(), 0.0);
         }
     }
 
@@ -105,6 +124,7 @@ async fn main() {
 
     tokio::join!(
         hyper_liquid.hyperliquid_ws(&shared_state),
-        bybit.bybit_ws(&common_tickers_vec, &common_tickers_set, &shared_state)
+        bybit.bybit_ws(&common_tickers_vec, &common_tickers_set, &shared_state),
+        aster_client.aster_ws(&shared_state)
     );
 }

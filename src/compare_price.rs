@@ -40,32 +40,75 @@ pub async fn compare_prices(
         *hyperliquid_prices.get(symbol).unwrap_or(&0.0)
     };
 
-    if bybit_price == 0.0 || hyperliquid_price == 0.0 {
-        return Ok(());
+    let aster_price = {
+        let aster_prices = shared_state.aster_prices.read().await;
+        *aster_prices.get(symbol).unwrap_or(&0.0)
+    };
+
+    // Сравниваем Bybit с Hyperliquid
+    if bybit_price != 0.0 && hyperliquid_price != 0.0 {
+        let difference = ((bybit_price - hyperliquid_price) / bybit_price).abs() * 100.0;
+
+        if difference >= 5.0 {
+            let message = format!(
+                ">5.0%: {}, bybit price: {}, hyperliquid price: {}, difference: {:.5}%",
+                symbol, bybit_price, hyperliquid_price, difference
+            );
+            
+            // Логируем в консоль
+            info!("{}", message);
+            
+            // Отправляем в Telegram, если доступно
+            if let Some(telegram) = &shared_state.telegram {
+                telegram
+                    .send_arbitrage_opportunity(symbol, bybit_price, hyperliquid_price, "Hyperliquid", difference)
+                    .await;
+            }
+        }
     }
 
-    let difference = ((bybit_price - hyperliquid_price) / bybit_price).abs() * 100.0;
+    // Сравниваем Bybit с ASTER
+    if bybit_price != 0.0 && aster_price != 0.0 {
+        let difference = ((bybit_price - aster_price) / bybit_price).abs() * 100.0;
 
-    if difference >= 5.0 {
-        let message = format!(
-            ">5.0%: {}, bybit price: {}, hyperliquid price: {}, difference: {:.5}%",
-            symbol, bybit_price, hyperliquid_price, difference
-        );
-        
-        // Логируем в консоль
-        info!("{}", message);
-        
-        // Отправляем в Telegram, если доступно
-        if let Some(telegram) = &shared_state.telegram {
-            telegram
-                .send_arbitrage_opportunity(symbol, bybit_price, hyperliquid_price, difference)
-                .await;
+        if difference >= 5.0 {
+            let message = format!(
+                ">5.0%: {}, bybit price: {}, aster price: {}, difference: {:.5}%",
+                symbol, bybit_price, aster_price, difference
+            );
+            
+            // Логируем в консоль
+            info!("{}", message);
+            
+            // Отправляем в Telegram, если доступно
+            if let Some(telegram) = &shared_state.telegram {
+                telegram
+                    .send_arbitrage_opportunity(symbol, bybit_price, aster_price, "ASTER", difference)
+                    .await;
+            }
         }
+    }
 
-        // Если инициализирован клиент BingX – пробуем автоматически открыть позицию по заданным правилам.
-        if let Some(bingx) = &shared_state.bingx {
+    // Если инициализирован клиент BingX – пробуем автоматически открыть позицию по заданным правилам.
+    // Открываем позицию только если есть арбитражная возможность (разница >= 5.0%) хотя бы с одним DEX
+    if let Some(bingx) = &shared_state.bingx {
+        // Проверяем, есть ли арбитражная возможность хотя бы с одним DEX
+        let hyperliquid_diff = if bybit_price != 0.0 && hyperliquid_price != 0.0 {
+            ((bybit_price - hyperliquid_price) / bybit_price).abs() * 100.0
+        } else {
+            0.0
+        };
+        
+        let aster_diff = if bybit_price != 0.0 && aster_price != 0.0 {
+            ((bybit_price - aster_price) / bybit_price).abs() * 100.0
+        } else {
+            0.0
+        };
+        
+        // Открываем позицию если разница >= 5.0% хотя бы с одним DEX
+        if hyperliquid_diff >= 5.0 || aster_diff >= 5.0 {
             match bingx
-                .handle_arbitrage_opportunity(symbol, bybit_price, hyperliquid_price)
+                .handle_arbitrage_opportunity(symbol, bybit_price, hyperliquid_price, aster_price)
                 .await
             {
                 Ok(BingXTradeOutcome::Opened {
@@ -73,29 +116,38 @@ pub async fn compare_prices(
                     direction,
                     quantity,
                     leverage,
+                    entry_price,
+                    take_profit_price,
                 }) => {
                     info!(
-                        "BingX position opened: symbol={}, direction={}, qty={}, leverage={}",
-                        opened_symbol, direction, quantity, leverage
+                        "BingX position opened: symbol={}, direction={}, qty={}, leverage={}, entry_price={}, take_profit_price={}",
+                        opened_symbol, direction, quantity, leverage, entry_price, take_profit_price
                     );
 
                     if let Some(telegram) = &shared_state.telegram {
+                        let max_diff = hyperliquid_diff.max(aster_diff);
                         let msg = format!(
                             "✅ <b>BingX position opened</b>\n\n\
                             Symbol: <code>{}</code>\n\
                             Side: <code>{}</code>\n\
                             Qty: <code>{:.8}</code>\n\
                             Leverage: <code>{:.0}x</code>\n\
+                            Entry Price: <code>{:.8}</code>\n\
+                            Take Profit: <code>{:.8}</code> (+3%)\n\
                             Bybit: <code>{:.8}</code>\n\
                             Hyperliquid: <code>{:.8}</code>\n\
-                            Diff: <code>{:.5}%</code>",
+                            ASTER: <code>{:.8}</code>\n\
+                            Max Diff: <code>{:.5}%</code>",
                             opened_symbol,
                             direction,
                             quantity,
                             leverage,
+                            entry_price,
+                            take_profit_price,
                             bybit_price,
                             hyperliquid_price,
-                            difference
+                            aster_price,
+                            max_diff
                         );
                         telegram.send_message(&msg).await;
                     }
