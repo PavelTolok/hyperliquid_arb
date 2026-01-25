@@ -86,7 +86,8 @@ impl TelegramNotifier {
         &self,
         symbol: &str,
         bybit_price: f64,
-        hyperliquid_price: f64,
+        dex_price: f64,
+        dex_name: &str,
         difference: f64,
     ) {
         // Валидация и экранирование символа для защиты от HTML injection
@@ -97,14 +98,15 @@ impl TelegramNotifier {
             symbol
         };
         let escaped_symbol = Self::escape_html(safe_symbol);
+        let escaped_dex_name = Self::escape_html(dex_name);
 
         let message = format!(
             "🔔 <b>Арбитражная возможность!</b>\n\n\
             Символ: <code>{}</code>\n\
             Bybit цена: <code>{:.8}</code>\n\
-            Hyperliquid цена: <code>{:.8}</code>\n\
+            {} цена: <code>{:.8}</code>\n\
             Разница: <code>{:.5}%</code>",
-            escaped_symbol, bybit_price, hyperliquid_price, difference
+            escaped_symbol, bybit_price, escaped_dex_name, dex_price, difference
         );
 
         self.send_message(&message).await;

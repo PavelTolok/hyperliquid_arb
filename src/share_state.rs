@@ -8,6 +8,7 @@ use crate::{bingx::BingXClient, telegram::TelegramNotifier};
 pub struct SharedState {
     pub bybit_prices: RwLock<HashMap<String, f64>>,
     pub hyperliquid_prices: RwLock<HashMap<String, f64>>,
+    pub aster_prices: RwLock<HashMap<String, f64>>,
     pub telegram: Option<TelegramNotifier>,
     /// Опциональный клиент BingX. Если не инициализирован – торги на BingX отключены.
     pub bingx: Option<std::sync::Arc<BingXClient>>,
@@ -18,6 +19,7 @@ impl SharedState {
         SharedState {
             bybit_prices: RwLock::new(HashMap::new()),
             hyperliquid_prices: RwLock::new(HashMap::new()),
+            aster_prices: RwLock::new(HashMap::new()),
             telegram: None,
             bingx,
         }
@@ -27,6 +29,7 @@ impl SharedState {
         SharedState {
             bybit_prices: RwLock::new(HashMap::new()),
             hyperliquid_prices: RwLock::new(HashMap::new()),
+            aster_prices: RwLock::new(HashMap::new()),
             telegram: Some(telegram),
             bingx,
         }
