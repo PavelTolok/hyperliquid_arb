@@ -49,9 +49,9 @@ pub async fn compare_prices(
     if bybit_price != 0.0 && hyperliquid_price != 0.0 {
         let difference = ((bybit_price - hyperliquid_price) / bybit_price).abs() * 100.0;
 
-        if difference >= 0.1 {
+        if difference >= 5.0 {
             let message = format!(
-                ">0.1%: {}, bybit price: {}, hyperliquid price: {}, difference: {:.5}%",
+                ">5.0%: {}, bybit price: {}, hyperliquid price: {}, difference: {:.5}%",
                 symbol, bybit_price, hyperliquid_price, difference
             );
             
@@ -71,9 +71,9 @@ pub async fn compare_prices(
     if bybit_price != 0.0 && aster_price != 0.0 {
         let difference = ((bybit_price - aster_price) / bybit_price).abs() * 100.0;
 
-        if difference >= 0.1 {
+        if difference >= 5.0 {
             let message = format!(
-                ">0.1%: {}, bybit price: {}, aster price: {}, difference: {:.5}%",
+                ">5.0%: {}, bybit price: {}, aster price: {}, difference: {:.5}%",
                 symbol, bybit_price, aster_price, difference
             );
             
@@ -90,7 +90,7 @@ pub async fn compare_prices(
     }
 
     // Если инициализирован клиент BingX – пробуем автоматически открыть позицию по заданным правилам.
-    // Открываем позицию только если есть арбитражная возможность (разница >= 0.1%) хотя бы с одним DEX
+    // Открываем позицию только если есть арбитражная возможность (разница >= 5.0%) хотя бы с одним DEX
     if let Some(bingx) = &shared_state.bingx {
         // Проверяем, есть ли арбитражная возможность хотя бы с одним DEX
         let hyperliquid_diff = if bybit_price != 0.0 && hyperliquid_price != 0.0 {
@@ -105,8 +105,8 @@ pub async fn compare_prices(
             0.0
         };
         
-        // Открываем позицию если разница >= 0.1% хотя бы с одним DEX
-        if hyperliquid_diff >= 0.1 || aster_diff >= 0.1 {
+        // Открываем позицию если разница >= 5.0% хотя бы с одним DEX
+        if hyperliquid_diff >= 5.0 || aster_diff >= 5.0 {
             match bingx
                 .handle_arbitrage_opportunity(symbol, bybit_price, hyperliquid_price, aster_price)
                 .await
@@ -116,10 +116,12 @@ pub async fn compare_prices(
                     direction,
                     quantity,
                     leverage,
+                    entry_price,
+                    take_profit_price,
                 }) => {
                     info!(
-                        "BingX position opened: symbol={}, direction={}, qty={}, leverage={}",
-                        opened_symbol, direction, quantity, leverage
+                        "BingX position opened: symbol={}, direction={}, qty={}, leverage={}, entry_price={}, take_profit_price={}",
+                        opened_symbol, direction, quantity, leverage, entry_price, take_profit_price
                     );
 
                     if let Some(telegram) = &shared_state.telegram {
@@ -130,6 +132,8 @@ pub async fn compare_prices(
                             Side: <code>{}</code>\n\
                             Qty: <code>{:.8}</code>\n\
                             Leverage: <code>{:.0}x</code>\n\
+                            Entry Price: <code>{:.8}</code>\n\
+                            Take Profit: <code>{:.8}</code> (+3%)\n\
                             Bybit: <code>{:.8}</code>\n\
                             Hyperliquid: <code>{:.8}</code>\n\
                             ASTER: <code>{:.8}</code>\n\
@@ -138,6 +142,8 @@ pub async fn compare_prices(
                             direction,
                             quantity,
                             leverage,
+                            entry_price,
+                            take_profit_price,
                             bybit_price,
                             hyperliquid_price,
                             aster_price,
