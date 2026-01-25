@@ -1,7 +1,7 @@
 use crate::share_state::SharedState;
 use std::{collections::HashSet, error, sync::Arc, sync::LazyLock};
 use log::{info, error};
-use crate::bingx::BingXTradeOutcome;
+// use crate::bingx::BingXTradeOutcome; // Закомментировано вместе с функционалом открытия позиций
 
 const EXCLUDED_TOKENS: &[&str] = &[
     "PIXELUSDT",
@@ -49,9 +49,9 @@ pub async fn compare_prices(
     if bybit_price != 0.0 && hyperliquid_price != 0.0 {
         let difference = ((bybit_price - hyperliquid_price) / bybit_price).abs() * 100.0;
 
-        if difference >= 0.1 {
+        if difference >= 5.0 {
             let message = format!(
-                ">0.1%: {}, bybit price: {}, hyperliquid price: {}, difference: {:.5}%",
+                ">5.0%: {}, bybit price: {}, hyperliquid price: {}, difference: {:.5}%",
                 symbol, bybit_price, hyperliquid_price, difference
             );
             
@@ -71,9 +71,9 @@ pub async fn compare_prices(
     if bybit_price != 0.0 && aster_price != 0.0 {
         let difference = ((bybit_price - aster_price) / bybit_price).abs() * 100.0;
 
-        if difference >= 0.1 {
+        if difference >= 5.0 {
             let message = format!(
-                ">0.1%: {}, bybit price: {}, aster price: {}, difference: {:.5}%",
+                ">5.0%: {}, bybit price: {}, aster price: {}, difference: {:.5}%",
                 symbol, bybit_price, aster_price, difference
             );
             
@@ -90,74 +90,57 @@ pub async fn compare_prices(
     }
 
     // Если инициализирован клиент BingX – пробуем автоматически открыть позицию по заданным правилам.
-    // Открываем позицию только если есть арбитражная возможность (разница >= 0.1%) хотя бы с одним DEX
+    // ЗАКОММЕНТИРОВАНО: Автоматическое открытие позиций отключено
+    /*
     if let Some(bingx) = &shared_state.bingx {
-        // Проверяем, есть ли арбитражная возможность хотя бы с одним DEX
-        let hyperliquid_diff = if bybit_price != 0.0 && hyperliquid_price != 0.0 {
-            ((bybit_price - hyperliquid_price) / bybit_price).abs() * 100.0
-        } else {
-            0.0
-        };
-        
-        let aster_diff = if bybit_price != 0.0 && aster_price != 0.0 {
-            ((bybit_price - aster_price) / bybit_price).abs() * 100.0
-        } else {
-            0.0
-        };
-        
-        // Открываем позицию если разница >= 0.1% хотя бы с одним DEX
-        if hyperliquid_diff >= 0.1 || aster_diff >= 0.1 {
-            match bingx
-                .handle_arbitrage_opportunity(symbol, bybit_price, hyperliquid_price, aster_price)
-                .await
-            {
-                Ok(BingXTradeOutcome::Opened {
-                    symbol: opened_symbol,
-                    direction,
-                    quantity,
-                    leverage,
-                }) => {
-                    info!(
-                        "BingX position opened: symbol={}, direction={}, qty={}, leverage={}",
-                        opened_symbol, direction, quantity, leverage
-                    );
+        match bingx
+            .handle_arbitrage_opportunity(symbol, bybit_price, hyperliquid_price)
+            .await
+        {
+            Ok(BingXTradeOutcome::Opened {
+                symbol: opened_symbol,
+                direction,
+                quantity,
+                leverage,
+            }) => {
+                info!(
+                    "BingX position opened: symbol={}, direction={}, qty={}, leverage={}",
+                    opened_symbol, direction, quantity, leverage
+                );
 
-                    if let Some(telegram) = &shared_state.telegram {
-                        let max_diff = hyperliquid_diff.max(aster_diff);
-                        let msg = format!(
-                            "✅ <b>BingX position opened</b>\n\n\
-                            Symbol: <code>{}</code>\n\
-                            Side: <code>{}</code>\n\
-                            Qty: <code>{:.8}</code>\n\
-                            Leverage: <code>{:.0}x</code>\n\
-                            Bybit: <code>{:.8}</code>\n\
-                            Hyperliquid: <code>{:.8}</code>\n\
-                            ASTER: <code>{:.8}</code>\n\
-                            Max Diff: <code>{:.5}%</code>",
-                            opened_symbol,
-                            direction,
-                            quantity,
-                            leverage,
-                            bybit_price,
-                            hyperliquid_price,
-                            aster_price,
-                            max_diff
-                        );
-                        telegram.send_message(&msg).await;
-                    }
-                }
-                Ok(BingXTradeOutcome::Skipped { reason }) => {
-                    info!("BingX trade skipped for {}: {}", symbol, reason);
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to handle arbitrage opportunity on BingX for {}: {}",
-                        symbol, e
+                if let Some(telegram) = &shared_state.telegram {
+                    let msg = format!(
+                        "✅ <b>BingX position opened</b>\n\n\
+                        Symbol: <code>{}</code>\n\
+                        Side: <code>{}</code>\n\
+                        Qty: <code>{:.8}</code>\n\
+                        Leverage: <code>{:.0}x</code>\n\
+                        Bybit: <code>{:.8}</code>\n\
+                        Hyperliquid: <code>{:.8}</code>\n\
+                        Diff: <code>{:.5}%</code>",
+                        opened_symbol,
+                        direction,
+                        quantity,
+                        leverage,
+                        bybit_price,
+                        hyperliquid_price,
+                        difference
                     );
+                    telegram.send_message(&msg).await;
                 }
+            }
+            Ok(BingXTradeOutcome::Skipped { reason }) => {
+                info!("BingX trade skipped for {}: {}", symbol, reason);
+            }
+            Err(e) => {
+                error!(
+                    "Failed to handle arbitrage opportunity on BingX for {}: {}",
+                    symbol, e
+                );
             }
         }
     }
+    */
 
     Ok(())
 }
