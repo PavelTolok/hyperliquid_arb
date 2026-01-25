@@ -66,6 +66,7 @@ where
     data: Option<T>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Position {
     symbol: String,
@@ -75,11 +76,13 @@ struct Position {
     position_amt: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Default)]
 struct PositionsData {
     positions: Vec<Position>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct BalanceItem {
     asset: String,
@@ -87,6 +90,7 @@ struct BalanceItem {
     available_balance: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Default)]
 struct BalanceData {
     balances: Vec<BalanceItem>,
